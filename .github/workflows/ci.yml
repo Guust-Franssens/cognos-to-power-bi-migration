@@ -31,3 +31,5 @@ jobs:
         run: uv run mypy --config-file tools\cognos-to-powerbi\pyproject.toml tools\cognos-to-powerbi\src
       - name: Run offline tests
         run: uv run pytest -q -p no:cacheprovider
+      - name: Check source release allowlist
+        run: uv run python scripts\package_source.py

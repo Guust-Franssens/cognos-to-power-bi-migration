@@ -25,6 +25,7 @@ node_modules/
 /out/
 /assets/
 /captures/
+/workspaces/
 /_brief/
 /.review-*/
 **/examples/

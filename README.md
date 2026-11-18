@@ -10,6 +10,8 @@ a claim of migration fidelity.
   (PBIP, TMDL and PBIR), with explicit review items for unsupported constructs.
 - A headless Cognos oracle-capture tool for specifications, rendered outputs,
   table-level data and lineage, subject to server capabilities.
+- Four role-separated project agents and a scaffold for external, isolated
+  baseline/working migration units.
 - Offline capture tests and a selected, self-contained subset of converter tests.
 - A Python dependency manifest and Windows CI for this subset.
 
@@ -80,6 +82,57 @@ include explicitly unsupported legs; it does not mean every visual has an oracle
 Usage is not supplied by these REST APIs, package lineage is incomplete, and
 chart data or some visual renders may be unavailable.
 
+## Create an agent run
+
+Run this after converting an authorized Cognos specification. The source project
+and numbered run root must be local, and the run root must be outside this
+repository:
+
+```powershell
+uv run python scripts\create_migration_workspace.py `
+    --source-project "C:\private\converted-pbip" `
+    --run-parent "C:\private\migration-runs" `
+    --run-slug "quarterly-sales" `
+    --unit-key "report-name"
+```
+
+The tool allocates the next external `<NNN>-<slug>` run directory. Each report
+unit lives under `<run>\units\<unit-key>\` and contains `baseline\`, `working\`
+and a human-owned `brief.md`. The root `run.json` records run identity, canonical
+path, creation time, each project filename and each baseline SHA-256 inventory.
+The hash inventory is outside the unit and is not duplicated in a unit manifest.
+To add another report to a run, pass its source with `--run-root "<run>"` and a
+new `--unit-key`. The command requires exactly one top-level `.pbip`, rejects
+source/report/data/export files outside a safe PBIP file set before creating
+output, excludes Desktop-local cache/settings and copies no original Cognos
+source or oracle. Baseline files and `run.json` are marked read-only.
+
+Verify a unit against its parent run manifest before and after each agent
+handoff:
+
+```powershell
+uv run python scripts\create_migration_workspace.py `
+    --verify-unit "C:\private\migration-runs\001-quarterly-sales\units\report-name"
+```
+
+For a read-only check of every report unit, use:
+
+```powershell
+uv run python scripts\create_migration_workspace.py `
+    --verify-run "C:\private\migration-runs\001-quarterly-sales"
+```
+
+Changed, added or missing baseline files block verification. Do not edit baseline
+or regenerate its hashes to hide a change. Agents may edit only their owned files
+under `working\`; the run root itself is outside unit scope. This is not a
+cryptographic trust boundary against an agent with same-user write access to the
+run root, since that user can also rewrite `run.json`. Do not commit the run.
+
+Agent instructions specify gates and evidence boundaries, but do not package the
+Power BI Desktop bridge, model-refresh skill, or an oracle-query integration.
+Those are environment prerequisites. If they are unavailable, the agents must
+report a blocked or unverified gate, never claim a migration sign-off.
+
 ## Local checks
 
 ```powershell
@@ -96,18 +149,41 @@ Corpus and conformance suites that need external reports or recorded outputs are
 not bundled. The selected converter tests do not represent the pilot's full
 coverage.
 
+## Build a code-only source archive
+
+The source allowlist is `release-files.txt`. It names every file admitted to the
+source archive. Validate it from a clean checkout:
+
+```powershell
+uv run python scripts\package_source.py
+```
+
+To create a ZIP from the clean committed `HEAD`, choose a new destination outside
+the checkout:
+
+```powershell
+uv run python scripts\package_source.py `
+    --output "C:\private\dist\cognos-migration-source.zip"
+```
+
+The archive command refuses a dirty checkout, unlisted or missing tracked files,
+report/data/model file extensions, common local-user paths and high-confidence
+credential patterns. It verifies the archive entries against the allowlist. This
+is a guardrail, not proof that arbitrary text or code contains no copied report
+material: review every proposed allowlist change before committing it. No report
+corpus, private evidence or customer content is permitted in a release.
+
 ## Next refinements
 
 The intended workflow is deterministic conversion, specialist semantic/report
-repairs, then independent validation. The pilot's agent definitions, Desktop
-refresh helpers, report-specific data generators and orchestration are not yet
-part of this clean snapshot. They need portable configuration, a generic unit
-contract and dependency/provenance checks before import.
+repairs, then independent validation. Report-specific data generators are not
+bundled. The generic unit scaffold and agent instructions do not replace a real
+oracle, Power BI Desktop validation, or a customer-approved fidelity bar.
 
-Further release work includes a portable dependency lock, a distribution allowlist and automated content
-checks, an optional external-corpus test harness, a support matrix, clean-machine
-Desktop validation and a licensing decision for the toolkit's original code.
-No publishing workflow or automatic deployment is configured.
+Further release work includes a portable dependency lock, an optional
+external-corpus test harness, a support matrix, clean-machine Desktop validation
+and a licensing decision for the toolkit's original code. No publishing workflow
+or automatic deployment is configured.
 
 ## Provenance and licensing
 
