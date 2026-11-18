@@ -53,7 +53,9 @@ instructions. Do not copy them into the checkout or another service.
 - Never edit TMDL, DAX or PBIR yourself. Route a finding to its owner or to the
   human when the source, oracle or scope is in doubt.
 - Verify each specialist's file boundary, rerun the gates it claims, and update
-  limitations from current evidence. After each specialist handoff and before
+  limitations from current evidence. The gate commands are in the root
+  `AGENTS.md` (`parity_check.py`, `dax_query.py`, `capture_pages.py`); judge
+  them by exit code. After each specialist handoff and before
   final validation, rerun `--verify-unit "<run>\units\<unit-key>"` to detect
   baseline changes.
   A mismatch blocks the unit; do not repair baseline or reset the hashes. If

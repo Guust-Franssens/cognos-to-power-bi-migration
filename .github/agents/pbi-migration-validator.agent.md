@@ -43,6 +43,19 @@ Run independent controlled checks, not just the builder's checks:
   repaired item is production-ready.
 - Cite commands, exit codes, exact paths, numeric estate and capture evidence.
 
+Use the repository's read-only gates, judged by exit code:
+
+- `uv run --with pythonnet python scripts\parity_check.py --unit "<unit>" --pid
+  <pid> --oracle "<oracle>"` (0 pass, 1 failures, 2 refused, 3 crashed).
+- `uv run --with pythonnet python scripts\dax_query.py --unit "<unit>" --pid
+  <pid> --dax "EVALUATE ..."` for independent grains and edge cases.
+- `uv run python scripts\capture_pages.py --unit "<unit>" --pid <pid> --out
+  "<unit>\captures\validation"`, then look at every PNG. Never write over a
+  builder's captures.
+
+A refusal (exit 2) or a crash (exit 3) is unverified evidence, not a pass or a
+fail of the migration.
+
 ## Verdict
 
 Return `SIGN-OFF` only when numeric and rendered checks both meet the brief's bar.

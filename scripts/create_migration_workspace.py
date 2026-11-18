@@ -22,6 +22,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from xml.etree import ElementTree
 
 LOG = logging.getLogger("create_migration_workspace")
 LOCAL_STATE_NAMES = {".pbi", "cache.abf", "localsettings.json"}
@@ -31,6 +32,14 @@ PROJECT_METADATA_FILES = {
     "migration_review.json",
     "migration_review.md",
 }
+REPORT_RESOURCE_SUFFIXES = {".gif", ".jpeg", ".jpg", ".json", ".png", ".svg"}
+IMAGE_SIGNATURES = {
+    ".gif": (b"GIF87a", b"GIF89a"),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+}
+PLATFORM_ITEM_TYPES = {".report": "Report", ".semanticmodel": "SemanticModel"}
 RUN_SCHEMA = "migration-run.v1"
 RUN_NAME_PATTERN = re.compile(r"^(?P<number>\d{3,})-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$")
 KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -131,11 +140,108 @@ def _in_project_definition(path: Path) -> bool:
     )
 
 
+def _is_item_file(path: Path) -> bool:
+    """Names of documented PBIP item files outside definition/ that the converter, Desktop and Fabric Git write.
+
+    A name match is not enough: _check_item_content also requires the content PBIP writes there.
+    """
+    parts = [part.casefold() for part in path.parts]
+    if len(parts) < 2 or not parts[0].endswith((".report", ".semanticmodel")):
+        return False
+    if parts[1:] == [".platform"]:
+        return True
+    if parts[0].endswith(".semanticmodel"):
+        return parts[1:] == ["diagramlayout.json"]
+    suffix = path.suffix.casefold()
+    if len(parts) == 4 and parts[1:3] == ["staticresources", "registeredresources"]:
+        return suffix in REPORT_RESOURCE_SUFFIXES
+    return len(parts) == 5 and parts[1:4] == ["staticresources", "sharedresources", "basethemes"] and suffix == ".json"
+
+
+def _json_object(path: Path, relative: Path) -> dict:
+    try:
+        data = json.loads(path.read_bytes().decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"PBIP item file is not UTF-8 JSON: {relative}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"PBIP item file is not a JSON object: {relative}")
+    return data
+
+
+def _registered_resource_paths(source: Path, report_folder: str) -> set[str]:
+    """Item paths of the RegisteredResources package in the report's PBIR definition/report.json."""
+    report_json = source / report_folder / "definition" / "report.json"
+    try:
+        report = json.loads(report_json.read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    packages = report.get("resourcePackages") if isinstance(report, dict) else None
+    paths: set[str] = set()
+    for package in packages if isinstance(packages, list) else []:
+        if not isinstance(package, dict) or package.get("type") != "RegisteredResources":
+            continue
+        for item in package.get("items") if isinstance(package.get("items"), list) else []:
+            if isinstance(item, dict) and isinstance(item.get("path"), str):
+                paths.add(item["path"].casefold())
+    return paths
+
+
+def _check_registered_resource(source: Path, relative: Path) -> None:
+    path = source / relative
+    suffix = relative.suffix.casefold()
+    data = path.read_bytes()
+    if suffix in IMAGE_SIGNATURES:
+        if not data.startswith(IMAGE_SIGNATURES[suffix]):
+            raise ValueError(f"registered resource is not a {suffix[1:].upper()} image: {relative}")
+    elif suffix == ".svg":
+        try:
+            root = ElementTree.fromstring(data)
+        except ElementTree.ParseError as exc:
+            raise ValueError(f"registered resource is not SVG XML: {relative}: {exc}") from exc
+        if root.tag.rsplit("}", 1)[-1] != "svg":
+            raise ValueError(f"registered resource is XML without an svg root: {relative}")
+    else:
+        try:
+            json.loads(data.decode("utf-8-sig"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"registered resource is not UTF-8 JSON: {relative}: {exc}") from exc
+    if relative.name.casefold() not in _registered_resource_paths(source, relative.parts[0]):
+        raise ValueError(
+            f"registered resource is not listed in {relative.parts[0]}/definition/report.json "
+            f"resourcePackages: {relative}"
+        )
+
+
+def _check_item_content(source: Path, relative: Path) -> None:
+    """An allowed item file name must also hold what PBIP writes there, not other material."""
+    parts = [part.casefold() for part in relative.parts]
+    if parts[1:] == [".platform"]:
+        item_type = PLATFORM_ITEM_TYPES[".report" if parts[0].endswith(".report") else ".semanticmodel"]
+        data = _json_object(source / relative, relative)
+        metadata = data.get("metadata")
+        if (
+            not isinstance(data.get("$schema"), str)
+            or not isinstance(metadata, dict)
+            or metadata.get("type") != item_type
+            or not isinstance(metadata.get("displayName"), str)
+        ):
+            raise ValueError(
+                f".platform needs $schema and metadata with type {item_type} and a displayName: {relative}"
+            )
+    elif parts[1:3] == ["staticresources", "registeredresources"]:
+        _check_registered_resource(source, relative)
+    else:
+        _json_object(source / relative, relative)
+
+
 def _validate_project_files(source: Path) -> None:
     for path in source.rglob("*"):
         if not path.is_file() or _is_local_state(path.relative_to(source)):
             continue
         relative = path.relative_to(source)
+        if _is_item_file(relative):
+            _check_item_content(source, relative)
+            continue
         name = path.name.casefold()
         suffix = path.suffix.casefold()
         if suffix not in PROJECT_SUFFIXES and name not in PROJECT_METADATA_FILES:

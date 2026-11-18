@@ -104,6 +104,186 @@ def test_source_material_rejection_leaves_no_run_output(
     assert list(parent.iterdir()) == []
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
+
+
+def _platform(item_type: str) -> str:
+    return json.dumps(
+        {
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+            "metadata": {"type": item_type, "displayName": "Demo"},
+            "config": {"version": "2.0", "logicalId": "00000000-0000-0000-0000-000000000000"},
+        }
+    )
+
+
+def _write(path: Path, content: bytes | str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(content, str):
+        path.write_text(content, encoding="utf-8")
+    else:
+        path.write_bytes(content)
+    return path
+
+
+def _register(source: Path, *names: str) -> None:
+    """Write Demo.Report/definition/report.json listing names in its RegisteredResources package (PBIR)."""
+    report = {
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/report/3.0.0/schema.json",
+        "themeCollection": {"baseTheme": {"name": "CY24SU10", "type": "SharedResources"}},
+        "resourcePackages": [
+            {
+                "name": "SharedResources",
+                "type": "SharedResources",
+                "items": [{"name": "CY24SU10", "path": "BaseThemes/CY24SU10.json", "type": "BaseTheme"}],
+            },
+            {
+                "name": "RegisteredResources",
+                "type": "RegisteredResources",
+                "items": [{"name": name, "path": name, "type": "Image"} for name in names],
+            },
+        ],
+    }
+    _write(source / "Demo.Report" / "definition" / "report.json", json.dumps(report))
+
+
+def test_accepts_documented_pbip_item_files(tmp_path: Path, source_project: Path, repository: Path) -> None:
+    report = source_project / "Demo.Report"
+    resources = report / "StaticResources" / "RegisteredResources"
+    item_files = [
+        _write(source_project / "Demo.SemanticModel" / ".platform", _platform("SemanticModel")),
+        _write(source_project / "Demo.SemanticModel" / "diagramLayout.json", '{"version": "1.1.0"}'),
+        _write(report / ".platform", "\ufeff" + _platform("Report")),
+        _write(resources / "logo1234.png", PNG),
+        _write(resources / "photo.JPG", b"\xff\xd8\xff\xe0" + b"\x00" * 8),
+        _write(resources / "anim.gif", b"GIF89a" + b"\x00" * 8),
+        _write(resources / "icon.svg", SVG),
+        _write(resources / "CustomTheme.json", '{"name": "Custom"}'),
+        _write(report / "StaticResources" / "SharedResources" / "BaseThemes" / "CY24SU10.json", '{"name": "x"}'),
+    ]
+    _register(source_project, "logo1234.png", "photo.jpg", "anim.gif", "icon.svg", "CustomTheme.json")
+
+    run_root, unit = _create_run(tmp_path, source_project, repository)
+
+    inventory = json.loads((run_root / "run.json").read_text(encoding="utf-8"))["units"]["report-one"]
+    for path in item_files:
+        relative = path.relative_to(source_project)
+        assert relative.as_posix() in inventory["baselineSha256"]
+        assert (unit / "working" / relative).is_file()
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".platform",
+        "Demo.Report/screenshot.png",
+        "Demo.Report/diagramLayout.json",
+        "Demo.Report/StaticResources/RegisteredResources/export.csv",
+        "Demo.Report/StaticResources/RegisteredResources/nested/logo.png",
+        "Demo.Report/StaticResources/SharedResources/BaseThemes/theme.png",
+        "Demo.Report/StaticResources/SharedResources/BaseThemes/nested/theme.json",
+        "Demo.SemanticModel/StaticResources/RegisteredResources/logo.png",
+        "Demo.SemanticModel/nested/.platform",
+        "Demo.SemanticModel/nested/diagramLayout.json",
+        "Demo.SemanticModel/definition/x/../../nested2/diagramLayout.json",
+        "Other/StaticResources/RegisteredResources/logo.png",
+    ],
+)
+def test_refuses_near_miss_item_files(tmp_path: Path, source_project: Path, repository: Path, relative: str) -> None:
+    path = source_project / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-PBIP file|JSON outside"):
+        _create_run(tmp_path, source_project, repository)
+
+
+@pytest.mark.parametrize(
+    ("relative", "content", "message"),
+    [
+        ("Demo.Report/.platform", "<report><query/></report>", "not UTF-8 JSON"),
+        ("Demo.Report/.platform", "[1, 2]", "not a JSON object"),
+        ("Demo.Report/.platform", '{"metadata": {"type": "Report", "displayName": "Demo"}}', "needs \\$schema"),
+        ("Demo.Report/.platform", _platform("SemanticModel"), "type Report"),
+        ("Demo.SemanticModel/.platform", _platform("Report"), "type SemanticModel"),
+        ("Demo.SemanticModel/diagramLayout.json", "<report><query/></report>", "not UTF-8 JSON"),
+        ("Demo.SemanticModel/diagramLayout.json", '"text"', "not a JSON object"),
+        ("Demo.Report/StaticResources/SharedResources/BaseThemes/CY24SU10.json", "<theme/>", "not UTF-8 JSON"),
+    ],
+)
+def test_refuses_item_files_without_pbip_content(
+    tmp_path: Path, source_project: Path, repository: Path, relative: str, content: str, message: str
+) -> None:
+    _write(source_project / relative, content)
+    parent = tmp_path / "external-runs"
+    parent.mkdir()
+
+    with pytest.raises(ValueError, match=message):
+        create_run(source_project, parent, "customer-report", "report-one", repository)
+    assert list(parent.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "message"),
+    [
+        ("logo.png", b"GIF89a....", "not a PNG image"),
+        ("logo.png", b"synthetic screenshot", "not a PNG image"),
+        ("photo.jpg", PNG, "not a JPG image"),
+        ("photo.jpeg", b"\x00\x00", "not a JPEG image"),
+        ("anim.gif", PNG, "not a GIF image"),
+        ("icon.svg", b"<report><query/></report>", "without an svg root"),
+        ("icon.svg", b"<svg", "not SVG XML"),
+        ("theme.json", b"<report/>", "not UTF-8 JSON"),
+    ],
+)
+def test_refuses_registered_resources_whose_content_does_not_match_the_suffix(
+    tmp_path: Path, source_project: Path, repository: Path, name: str, content: bytes, message: str
+) -> None:
+    _write(source_project / "Demo.Report" / "StaticResources" / "RegisteredResources" / name, content)
+    _register(source_project, name)
+
+    with pytest.raises(ValueError, match=message):
+        _create_run(tmp_path, source_project, repository)
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [("screenshot.png", PNG), ("data-export.json", '[{"region": "north", "sales": 10}]'), ("icon.svg", SVG)],
+)
+def test_refuses_registered_resources_the_report_does_not_reference(
+    tmp_path: Path, source_project: Path, repository: Path, name: str, content
+) -> None:
+    _write(source_project / "Demo.Report" / "StaticResources" / "RegisteredResources" / name, content)
+    _register(source_project, "logo.png")
+
+    with pytest.raises(ValueError, match="not listed in Demo.Report/definition/report.json"):
+        _create_run(tmp_path, source_project, repository)
+
+
+def test_refuses_a_registered_resource_named_only_in_another_package(
+    tmp_path: Path, source_project: Path, repository: Path
+) -> None:
+    _write(source_project / "Demo.Report" / "StaticResources" / "RegisteredResources" / "CY24SU10.json", "{}")
+    _register(source_project)
+    report_json = source_project / "Demo.Report" / "definition" / "report.json"
+    report = json.loads(report_json.read_text(encoding="utf-8"))
+    report["resourcePackages"][0]["items"].append({"name": "x", "path": "CY24SU10.json", "type": "BaseTheme"})
+    report_json.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not listed"):
+        _create_run(tmp_path, source_project, repository)
+
+
+def test_refuses_a_registered_resource_without_a_report_json(
+    tmp_path: Path, source_project: Path, repository: Path
+) -> None:
+    _write(source_project / "Demo.Report" / "StaticResources" / "RegisteredResources" / "logo.png", PNG)
+
+    with pytest.raises(ValueError, match="not listed"):
+        _create_run(tmp_path, source_project, repository)
+
+
 def test_excludes_desktop_cache_and_local_settings(tmp_path: Path, source_project: Path, repository: Path) -> None:
     local_state = source_project / "Demo.SemanticModel" / ".pbi"
     local_state.mkdir()

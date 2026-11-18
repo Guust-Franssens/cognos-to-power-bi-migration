@@ -14,6 +14,8 @@ dist/
 node_modules/
 .vscode/
 .idea/
+# Scratch run roots created and removed by scripts\tests.
+/.run-root-test-data/
 # Local resolution currently uses an environment-specific package feed.
 # Remove this exclusion when a portable public-source lock is available.
 /uv.lock

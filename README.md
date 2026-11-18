@@ -12,6 +12,8 @@ a claim of migration fidelity.
   table-level data and lineage, subject to server capabilities.
 - Four role-separated project agents and a scaffold for external, isolated
   baseline/working migration units.
+- Read-only Power BI Desktop gates for numeric parity, ad-hoc DAX and page
+  captures of one unit.
 - Offline capture tests and a selected, self-contained subset of converter tests.
 - A Python dependency manifest and Windows CI for this subset.
 
@@ -105,7 +107,19 @@ To add another report to a run, pass its source with `--run-root "<run>"` and a
 new `--unit-key`. The command requires exactly one top-level `.pbip`, rejects
 source/report/data/export files outside a safe PBIP file set before creating
 output, excludes Desktop-local cache/settings and copies no original Cognos
-source or oracle. Baseline files and `run.json` are marked read-only.
+source or oracle. Beyond the project's JSON, TMDL and PBIR files, that set admits
+only documented PBIP item files: each item's `.platform`, the semantic model's
+`diagramLayout.json`, and the report's `StaticResources\RegisteredResources`
+images and JSON and `StaticResources\SharedResources\BaseThemes` JSON. Each item
+file is checked by content: it must parse as its type, and a registered resource
+must match its suffix and be listed in the report's `definition\report.json`. Other
+PBIP extras (for example `CustomVisuals\` or `DAXQueries\`) are still refused.
+The content check proves the file type, not its purpose: a BaseTheme may be any
+JSON object and a registered `.json` resource any JSON that `report.json` lists,
+so JSON data placed there is admitted. A root `.gitignore`, which Desktop writes
+next to a saved `.pbip`, is refused like any other non-PBIP file; copy the
+project without it.
+Baseline files and `run.json` are marked read-only.
 
 Verify a unit against its parent run manifest before and after each agent
 handoff:
@@ -128,10 +142,83 @@ under `working\`; the run root itself is outside unit scope. This is not a
 cryptographic trust boundary against an agent with same-user write access to the
 run root, since that user can also rewrite `run.json`. Do not commit the run.
 
-Agent instructions specify gates and evidence boundaries, but do not package the
-Power BI Desktop bridge, model-refresh skill, or an oracle-query integration.
-Those are environment prerequisites. If they are unavailable, the agents must
-report a blocked or unverified gate, never claim a migration sign-off.
+## Gate a unit in Power BI Desktop
+
+Three read-only gates judge one unit's working project while it is open in Power
+BI Desktop. They need Windows, Power BI Desktop and the ADOMD.NET client (by
+default DAX Studio's copy under `%LOCALAPPDATA%\Programs\DAX Studio\bin`, or pass
+`--adomd`). Captures also need the `powerbi-desktop` CLI from
+`@microsoft/powerbi-desktop-bridge-cli` on PATH. `pythonnet` is supplied per run
+with `--with`; it is not a project dependency.
+
+Open the working project with `Start-Process`, so its path is on the process
+command line, and read the pid from there:
+
+```powershell
+$unit = "C:\private\migration-runs\001-quarterly-sales\units\report-name"
+Start-Process "$unit\working\Report.pbip"
+Get-CimInstance Win32_Process -Filter "Name='PBIDesktop.exe'" | Select-Object ProcessId, CommandLine
+
+uv run --with pythonnet python scripts\parity_check.py --unit $unit --pid <pid> `
+    --oracle "C:\private\parity\report-name.json" `
+    --data-expression DataFolder --data-path "C:\private\data"
+uv run --with pythonnet python scripts\dax_query.py --unit $unit --pid <pid> --dax 'EVALUATE ROW("n", 1)'
+uv run python scripts\capture_pages.py --unit $unit --pid <pid>
+```
+
+Every gate first verifies the unit against `run.json` and refuses with exit 2
+unless the pid has that unit's working `.pbip` open: its command line must name
+exactly one absolute `.pbip`, the working one, so a pid on the baseline, another
+unit or a closed instance is refused. The working `.pbip` must name one report,
+by a relative path inside `working\`, and that report's `definition.pbir` must
+name its model `byPath`, also inside `working\`; a project pointed at the
+baseline or another unit is refused. The command line only proves the file
+opened at launch; a file opened later with File > Open is invisible to it, so
+never open another file in a gated instance. Exit 2 means nothing was checked,
+and exit 3 means the gate crashed (`CRASHED: <type>: <message>` on stderr). The
+gates write stdout and stderr as UTF-8 whatever the console code page, so read a
+piped gate as UTF-8.
+
+Parity exits 0 when every check passes and 1 on any mismatch, missing row,
+duplicate key, unreadable result value or DAX error, and on an unexpected row
+only when the check sets `exact_rows: true`. A whole-number float key (a
+Decimal year column read as `2024.0`) matches the oracle key `2024`. The DAX
+gate accepts one query that starts with `EVALUATE` or `DEFINE`, holds an
+`EVALUATE`, and has no `;` outside strings and comments; it keeps every column
+of a result whose column names repeat, suffixing the repeats `#2`, `#3`, and so
+on. `--data-expression` and `--data-path` go together, and `--data-path`
+accepts only a text parameter (one M string literal, optionally with
+`meta [...]`) naming exactly that folder. The guard reads only that parameter's
+current value: a partition that does not use the parameter, or data loaded
+before the value was set, still passes, so refresh after changing it.
+
+Captures go to `<unit>\captures\working` unless `--out` names a folder below
+`<unit>\captures\` or outside the run root, this checkout and any other run. No
+folder from the run root down to the output, `captures` included, may be a
+link, junction or other reparse point, and a folder that resolves inside any
+unit's `baseline` or `working` is refused. A rerun deletes only the PNGs its own
+record names and refuses a folder holding anything else, including a stray file
+or a record it cannot read. A capture stopped with Ctrl+C records status
+`interrupted` and the PNGs written so far, so the next run replaces it; after a
+killed process the record stays `running` and names no PNGs, and the next run
+refuses. Inspect that folder, then move it away or pass another `--out`. Exit 1
+flags a failed or suspiciously small page, or a PNG count that differs from the
+pages in the report's `pages.json`; it still needs a look.
+
+The oracle is a JSON object whose `checks` list holds DAX queries with expected
+values (finite numbers, text or null); its format is in the module docstring of
+`scripts\parity_check.py`. Duplicate keys, NaN, booleans and a hard-linked oracle
+are refused. Keep it outside the run root and this checkout: the gate refuses one
+inside either, and prints the SHA-256 of an oracle it accepts.
+Writing an oracle is a human decision; no generator from Cognos captures is
+included yet.
+
+The gates never refresh, save or edit a model. Model refresh, persistence and the
+Desktop bridge are environment prerequisites, not packaged here: process the
+model after the last TMDL edit, then cold-reopen and rerun parity. If a
+prerequisite is unavailable, agents report a blocked or unverified gate, never a
+sign-off. The gates were validated live once, on Power BI Desktop 2.160.579.0
+(Microsoft Store) with a synthetic model; other versions are unverified.
 
 ## Local checks
 
@@ -181,8 +268,9 @@ bundled. The generic unit scaffold and agent instructions do not replace a real
 oracle, Power BI Desktop validation, or a customer-approved fidelity bar.
 
 Further release work includes a portable dependency lock, an optional
-external-corpus test harness, a support matrix, clean-machine Desktop validation
-and a licensing decision for the toolkit's original code. No publishing workflow
+external-corpus test harness, a support matrix, clean-machine Desktop validation,
+a packaged model-refresh step, an oracle generator from Cognos captures and a
+licensing decision for the toolkit's original code. No publishing workflow
 or automatic deployment is configured.
 
 ## Provenance and licensing

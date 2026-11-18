@@ -27,9 +27,12 @@ Without that handoff, stop.
 
 1. Run the report-author validation command for this PBIR.
 2. Reload the same Desktop report instance using the supported bridge.
-3. Capture and inspect every page against the matching Cognos evidence.
-4. Re-run the agreed numeric gate to prove the report edit did not regress the
-   model or its bound fields.
+3. Capture every page with `uv run python scripts\capture_pages.py --unit
+   "<unit>" --pid <pid>` and inspect each PNG against the matching Cognos
+   evidence. Exit 1 flags a failed or suspiciously small page to look at.
+4. Re-run `uv run --with pythonnet python scripts\parity_check.py --unit
+   "<unit>" --pid <pid> --oracle "<oracle>"` to prove the report edit did not
+   regress the model or its bound fields. Judge both by exit code.
 5. If the authoring, Desktop or capture tool is unavailable, report the exact
    missing gate. Do not claim that a file-only edit rendered correctly.
 
