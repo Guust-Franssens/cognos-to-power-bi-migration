@@ -1,0 +1,74 @@
+# Local environments and tool state.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+node_modules/
+.vscode/
+.idea/
+# Local resolution currently uses an environment-specific package feed.
+# Remove this exclusion when a portable public-source lock is available.
+/uv.lock
+
+# Private inputs, evidence, outputs and local profiles.
+/inputs/
+/private/
+/data/
+/out/
+/assets/
+/captures/
+/_brief/
+/.review-*/
+**/examples/
+**/fixtures/
+**/conformance/
+**/external_*/
+**/.pbi/
+**/profile-*/
+**/secrets/
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+
+# No report specifications, exports, archives or generated model files.
+*.xml
+*.json
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.html
+*.mht
+*.zip
+*.7z
+*.tar
+*.gz
+*.pbix
+*.pbip
+*.pbit
+*.pbir
+*.pbism
+*.tmdl
+*.abf
+*.rdl
+*.log
+
+# This is defence in depth, not a licence or content audit.
+# Review the exact staged file list and contents before every push.

@@ -1,0 +1,33 @@
+name: Offline code checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.9"
+          python-version: "3.11"
+      - name: Install dependencies
+        run: uv sync
+      - name: Check capture formatting
+        run: uv run ruff format --check scripts
+      - name: Lint capture code
+        run: uv run ruff check scripts
+      - name: Check converter formatting
+        run: uv run ruff format --check tools\cognos-to-powerbi
+      - name: Lint converter
+        run: uv run ruff check tools\cognos-to-powerbi
+      - name: Type-check converter
+        run: uv run mypy --config-file tools\cognos-to-powerbi\pyproject.toml tools\cognos-to-powerbi\src
+      - name: Run offline tests
+        run: uv run pytest -q -p no:cacheprovider
