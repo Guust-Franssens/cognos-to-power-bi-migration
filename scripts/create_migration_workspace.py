@@ -113,13 +113,13 @@ def _is_reparse_point(path: Path) -> bool:
     return stat.S_ISLNK(metadata.st_mode) or bool(getattr(metadata, "st_file_attributes", 0) & reparse_flag)
 
 
-def _reject_reparse_points(source: Path) -> None:
+def _reject_reparse_points(source: Path, label: str = "source project") -> None:
     for root, directories, files in os.walk(source, followlinks=False):
         current = Path(root)
         for name in [*directories, *files]:
             path = current / name
             if _is_reparse_point(path):
-                raise ValueError(f"source project contains a link or reparse point: {path}")
+                raise ValueError(f"{label} contains a link or reparse point: {path}")
 
 
 def _copy_ignore(_directory: str, names: list[str]) -> set[str]:
@@ -374,7 +374,7 @@ def _verify_unit_path(unit_dir: Path, repo_root: Path) -> tuple[Path, str, dict,
     brief = unit / "brief.md"
     if not baseline.is_dir() or not working.is_dir() or not brief.is_file():
         raise ValueError(f"unit is missing baseline, working copy or human-owned brief: {unit}")
-    _reject_reparse_points(unit)
+    _reject_reparse_points(unit, "report unit")
     actual = _baseline_manifest(baseline)
     expected = entry["baselineSha256"]
     changed = sorted(path for path in set(expected) | set(actual) if expected.get(path) != actual.get(path))
@@ -521,7 +521,7 @@ def add_unit(source_project: Path, run_root: Path, unit_key: str, repo_root: Pat
     units_dir = root / "units"
     if not units_dir.is_dir() or _is_reparse_point(units_dir):
         raise ValueError(f"run is missing a safe units directory: {units_dir}")
-    _reject_reparse_points(root)
+    _reject_reparse_points(root, "run root")
     installed = False
     try:
         with tempfile.TemporaryDirectory(prefix=f".{key}.staging-", dir=units_dir) as temporary:

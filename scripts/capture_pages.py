@@ -13,7 +13,7 @@ purpose: Capture every report page of one report unit's working .pbip open in Po
          inside this checkout or inside another migration run (any folder holding a run.json). Elsewhere
          it is free. An existing output folder is only cleared when it
          holds nothing but its capture_pages.json record and the PNGs that record names as this script's
-         outputs; only those files and the record are deleted. The record's status ends as ok, suspect,
+         outputs; only those files and the record (last) are deleted. The record's status ends as ok, suspect,
          incomplete, failed, crashed or interrupted (Ctrl+C: the PNGs written so far are recorded, then
          the interrupt is raised again). Anything else in the folder, or PNGs left beside a record still
          "running" (it names no pages) because the process was killed outright, refuses the next run
@@ -132,7 +132,8 @@ def clear_previous(out: Path) -> None:
             f"{out} holds files this script did not write ({', '.join(sorted(foreign)[:5])}); "
             "choose another --out or move them away"
         )
-    for path in entries:
+    # The record goes last: an interrupt mid-cleanup then leaves PNGs it still names, not orphans.
+    for path in sorted(entries, key=lambda p: p.name == RECORD):
         path.unlink()
 
 

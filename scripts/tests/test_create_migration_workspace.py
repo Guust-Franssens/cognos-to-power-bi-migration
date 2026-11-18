@@ -205,6 +205,8 @@ def test_refuses_near_miss_item_files(tmp_path: Path, source_project: Path, repo
         ("Demo.Report/.platform", "<report><query/></report>", "not UTF-8 JSON"),
         ("Demo.Report/.platform", "[1, 2]", "not a JSON object"),
         ("Demo.Report/.platform", '{"metadata": {"type": "Report", "displayName": "Demo"}}', "needs \\$schema"),
+        ("Demo.Report/.platform", '{"$schema": "s", "metadata": {"type": "Report"}}', "and a displayName"),
+        ("Demo.Report/.platform", '{"$schema": "s", "metadata": {"type": "Report", "displayName": 1}}', "displayName"),
         ("Demo.Report/.platform", _platform("SemanticModel"), "type Report"),
         ("Demo.SemanticModel/.platform", _platform("Report"), "type SemanticModel"),
         ("Demo.SemanticModel/diagramLayout.json", "<report><query/></report>", "not UTF-8 JSON"),
@@ -448,3 +450,45 @@ def test_refuses_source_project_links(tmp_path: Path, source_project: Path, repo
         _create_run(tmp_path, source_project, repository)
 
     assert not (tmp_path / "external-runs").exists()
+
+
+@pytest.fixture
+def junction() -> Iterator:
+    """Create directory junctions (no privilege needed on Windows); remove them, unfollowed, after the test."""
+    made: list[Path] = []
+
+    def make(link: Path, target: Path) -> None:
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(str(target.resolve()), str(link))
+        except (ImportError, AttributeError, OSError) as exc:
+            pytest.skip(f"directory junctions cannot be created here: {exc}")
+        made.append(link)
+
+    yield make
+    for link in reversed(made):
+        if link.exists() or link.is_symlink():
+            link.rmdir()
+
+
+def test_a_link_inside_a_unit_is_named_as_in_the_unit(
+    tmp_path: Path, source_project: Path, repository: Path, junction
+) -> None:
+    _, unit = _create_run(tmp_path, source_project, repository)
+    junction(unit / "notes", tmp_path / "elsewhere")
+
+    with pytest.raises(ValueError, match="^report unit contains a link or reparse point: .*notes$"):
+        verify_unit(unit, repository)
+
+
+def test_a_link_inside_the_run_root_is_named_as_in_the_run_root(
+    tmp_path: Path, source_project: Path, repository: Path, junction
+) -> None:
+    run_root, _ = _create_run(tmp_path, source_project, repository)
+    junction(run_root / "notes", tmp_path / "elsewhere")
+
+    with pytest.raises(ValueError, match="^run root contains a link or reparse point: .*notes$"):
+        add_unit(source_project, run_root, "report-two", repository)
+    assert not (run_root / "units" / "report-two").exists()

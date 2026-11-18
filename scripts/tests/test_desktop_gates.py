@@ -1481,6 +1481,48 @@ def test_clear_previous_accepts_an_empty_existing_folder(tmp_path: Path) -> None
     assert out.is_dir()
 
 
+def test_clear_previous_interrupted_midway_leaves_a_folder_the_next_run_can_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "captures"
+    _previous_capture(out, ["Page 1.png", "Page 2.png"])
+    real = Path.unlink
+    calls: list[str] = []
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        calls.append(self.name)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        real(self, missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(KeyboardInterrupt):
+        capture_pages.clear_previous(out)
+    monkeypatch.setattr(Path, "unlink", real)
+
+    assert (out / capture_pages.RECORD).exists()
+    capture_pages.clear_previous(out)
+    assert list(out.iterdir()) == []
+
+
+@pytest.mark.parametrize("names", [["Page 1.png", "Page 2.png"], ["Alpha.png", "zaken.png"], ["Zeta.png", "alpha.png"]])
+def test_clear_previous_deletes_the_record_last(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, names) -> None:
+    out = tmp_path / "captures"
+    _previous_capture(out, names)
+    real = Path.unlink
+    calls: list[str] = []
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        calls.append(self.name)
+        real(self, missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    capture_pages.clear_previous(out)
+
+    assert calls[-1] == capture_pages.RECORD
+    assert sorted(calls[:-1]) == sorted(names)
+
+
 def test_expected_pages_refuses_a_report_without_pages_json(unit_dir: Path, repository: Path) -> None:
     unit = desktop_gate.verified_unit(unit_dir, repository)
     assert capture_pages.expected_pages(unit) == PAGES
@@ -1546,6 +1588,41 @@ def test_capture_main_replaces_its_own_previous_capture(unit_dir: Path, capture_
     assert code == 0
     assert record["status"] == "ok"
     assert (unit_dir / "captures" / "working" / f"{PAGES[0]}.png").stat().st_size == 20000
+
+
+def test_capture_main_never_counts_a_png_left_by_its_previous_capture(unit_dir: Path, capture_env) -> None:
+    _, behaviour = capture_env
+    assert _capture(unit_dir)[0] == 0
+    behaviour["pngs"] = {f"{PAGES[0]}.png": 20000}
+
+    code, record = _capture(unit_dir)
+
+    assert code == 1
+    assert record["status"] == "incomplete"
+    assert [page["file"] for page in record["pages"]] == [f"{PAGES[0]}.png"]
+    assert not (unit_dir / "captures" / "working" / f"{PAGES[1]}.png").exists()
+
+
+@pytest.mark.parametrize("left_pngs", [False, True])
+def test_capture_main_after_a_killed_capture(unit_dir: Path, capture_env, left_pngs: bool) -> None:
+    """A killed run leaves its "running" record, which names no PNGs: alone it is cleared, beside PNGs it refuses."""
+    calls, _ = capture_env
+    out = unit_dir / "captures" / "working"
+    out.mkdir(parents=True)
+    killed = {"unit": "report-one", "status": "running"}
+    (out / capture_pages.RECORD).write_text(json.dumps(killed), encoding="utf-8")
+    if left_pngs:
+        (out / f"{PAGES[0]}.png").write_bytes(b"png")
+
+    code, record = _capture(unit_dir)
+
+    if left_pngs:
+        assert (code, record) == (2, killed)
+        assert calls == []
+        assert (out / f"{PAGES[0]}.png").read_bytes() == b"png"
+    else:
+        assert code == 0
+        assert record["status"] == "ok"
 
 
 def test_capture_main_flags_small_pngs_as_suspect(unit_dir: Path, capture_env) -> None:

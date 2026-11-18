@@ -179,18 +179,20 @@ and exit 3 means the gate crashed (`CRASHED: <type>: <message>` on stderr). The
 gates write stdout and stderr as UTF-8 whatever the console code page, so read a
 piped gate as UTF-8.
 
-Parity exits 0 when every check passes and 1 on any mismatch, missing row,
-duplicate key, unreadable result value or DAX error, and on an unexpected row
-only when the check sets `exact_rows: true`. A whole-number float key (a
-Decimal year column read as `2024.0`) matches the oracle key `2024`. The DAX
-gate accepts one query that starts with `EVALUATE` or `DEFINE`, holds an
-`EVALUATE`, and has no `;` outside strings and comments; it keeps every column
-of a result whose column names repeat, suffixing the repeats `#2`, `#3`, and so
-on. `--data-expression` and `--data-path` go together, and `--data-path`
-accepts only a text parameter (one M string literal, optionally with
-`meta [...]`) naming exactly that folder. The guard reads only that parameter's
-current value: a partition that does not use the parameter, or data loaded
-before the value was set, still passes, so refresh after changing it.
+Parity exits 0 when every check passes and 1 on any mismatch, missing row, row
+key repeated in the query result, unreadable result value or DAX error, and on
+an unexpected row only when the check sets `exact_rows: true`. An oracle that
+repeats a JSON key in any object, or a check `id`, is refused with exit 2. A
+whole-number float key (a Decimal year column read as `2024.0`) matches the
+oracle key `2024`. The DAX gate accepts one query that starts with `EVALUATE`
+or `DEFINE`, holds an `EVALUATE`, and has no `;` outside strings and comments;
+it keeps every column of a result whose column names repeat, suffixing the
+repeats `#2`, `#3`, and so on. `--data-expression` and `--data-path` go
+together, and the data guard accepts only a shared expression that is a text
+parameter (one M string literal, optionally with `meta [...]`) naming exactly
+the `--data-path` folder. The guard reads only that parameter's current value:
+a partition that does not use the parameter, or data loaded before the value
+was set, still passes, so refresh after changing it.
 
 Captures go to `<unit>\captures\working` unless `--out` names a folder below
 `<unit>\captures\` or outside the run root, this checkout and any other run. No
@@ -199,17 +201,21 @@ link, junction or other reparse point, and a folder that resolves inside any
 unit's `baseline` or `working` is refused. A rerun deletes only the PNGs its own
 record names and refuses a folder holding anything else, including a stray file
 or a record it cannot read. A capture stopped with Ctrl+C records status
-`interrupted` and the PNGs written so far, so the next run replaces it; after a
-killed process the record stays `running` and names no PNGs, and the next run
-refuses. Inspect that folder, then move it away or pass another `--out`. Exit 1
-flags a failed or suspiciously small page, or a PNG count that differs from the
-pages in the report's `pages.json`; it still needs a look.
+`interrupted` and the PNGs written so far, so the next run replaces it. A killed
+process leaves its record `running`, naming no PNGs: on its own that record is
+cleared and the next run proceeds, but with PNGs beside it the next run refuses
+(exit 2) and deletes nothing. Inspect that folder, then move it away or pass
+another `--out`. Cleanup deletes the record last, so a Ctrl+C during cleanup
+leaves only PNGs the record still names. Exit 1 flags a failed or suspiciously
+small page, or a PNG count that differs from the pages in the report's
+`pages.json`; it still needs a look.
 
 The oracle is a JSON object whose `checks` list holds DAX queries with expected
 values (finite numbers, text or null); its format is in the module docstring of
-`scripts\parity_check.py`. Duplicate keys, NaN, booleans and a hard-linked oracle
-are refused. Keep it outside the run root and this checkout: the gate refuses one
-inside either, and prints the SHA-256 of an oracle it accepts.
+`scripts\parity_check.py`. Duplicate JSON keys, duplicate check ids, NaN,
+booleans and a hard-linked oracle are refused. Keep it outside the run root and
+this checkout: the gate refuses one inside either, and prints the SHA-256 of an
+oracle it accepts.
 Writing an oracle is a human decision; no generator from Cognos captures is
 included yet.
 

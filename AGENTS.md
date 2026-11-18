@@ -131,10 +131,11 @@ stdout and stderr whatever the console code page; decode a pipe as UTF-8.
   from the Desktop UI.
 - The oracle stays outside the run root and this checkout; the gate refuses
   otherwise, and prints the SHA-256 of an oracle it accepts. Expected values are
-  finite numbers, text or null; duplicate keys, NaN, booleans and a hard-linked
-  oracle are refused. Never edit it to make parity pass. A missing row, a wrong
-  value or an unreadable result value fails a check; an extra row fails it only
-  when the check sets `exact_rows: true`.
+  finite numbers, text or null; duplicate JSON keys, duplicate check ids, NaN,
+  booleans and a hard-linked oracle are refused (exit 2). Never edit it to make
+  parity pass. A missing row, a wrong value, a row key repeated in the query
+  result or an unreadable result value fails a check (exit 1); an extra row
+  fails it only when the check sets `exact_rows: true`.
 - When the model reads a local data folder, pass
   `--data-expression <name> --data-path <dir>` (always both). The guard checks
   only that the named shared expression is currently a text parameter (one M
@@ -152,8 +153,9 @@ stdout and stderr whatever the console code page; decode a pipe as UTF-8.
   A rerun deletes only the PNGs its own record names and refuses a folder that
   holds anything else, including a stray file or an unreadable record. Ctrl+C
   records status `interrupted` with the PNGs written so far, so the next run
-  replaces them; a killed capture leaves a `running` record naming no PNGs,
-  which the next run refuses. Inspect that folder, then move it away or pass
-  another `--out`.
+  replaces them. A killed capture leaves a `running` record naming no PNGs: on
+  its own the next run clears it and proceeds; with PNGs beside it the next run
+  refuses (exit 2) and deletes nothing. Inspect that folder, then move it away
+  or pass another `--out`. Cleanup deletes the record last.
 - The validator captures to `--out "<unit>\captures\validation"`, never over a
   builder's captures.
